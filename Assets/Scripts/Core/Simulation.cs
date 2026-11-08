@@ -544,7 +544,8 @@ namespace LuckyCiv.Core
             int water = s.Water > 0 ? Math.Max(1, (int)Math.Floor(s.Water * cfg.RaidTheftFraction)) : 0;
             s.Food -= food;
             s.Water -= water;
-            Log("¡Bandidos! Sin defensa roban " + food + " de comida y " + water + " de agua.");
+            Log("¡Bandidos! " + (s.DefensePoints > 0 ? "La vigilancia no basta y roban " : "Sin defensa roban ")
+                + food + " de comida y " + water + " de agua.");
         }
 
         void Kill(string cause)
