@@ -1,21 +1,48 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using LuckyCiv.Core;
 using LuckyCiv.Game;
-using LuckyCiv.UI;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace LuckyCiv.View
 {
     /// <summary>
-    /// Placeholder 3D village built from primitives: buildings per activity, one house per housing slot,
-    /// a colored capsule per villager, and a day/night light transition. Swap primitives for imported
-    /// models here without touching rules or UI.
+    /// Modelos de la aldea (FBX generados con Tools/Blender/build_models.py).
+    /// Si falta alguno, <see cref="VillageView"/> coloca una caja de color en su lugar y el juego sigue funcionando.
+    /// </summary>
+    [Serializable]
+    public sealed class VillageModels
+    {
+        public GameObject VillagerNormal, VillagerStrong, VillagerSmart, VillagerFast;
+        public GameObject House, Farm, Well, Plaza, Tower, Scaffold;
+        public GameObject TreeRound, TreePine, Bush, Rock, Ground, Alert;
+
+        public GameObject Villager(VillagerClass cls)
+        {
+            switch (cls)
+            {
+                case VillagerClass.Strong: return VillagerStrong;
+                case VillagerClass.Smart: return VillagerSmart;
+                case VillagerClass.Fast: return VillagerFast;
+                default: return VillagerNormal;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Aldea 3D: un edificio por actividad, una casa por cada bloque de vivienda, un habitante por aldeano
+    /// y transición día/noche. Solo lee <see cref="Simulation.State"/>; nunca calcula reglas.
     /// </summary>
     [RequireComponent(typeof(GameController))]
     public sealed class VillageView : MonoBehaviour
     {
+        [SerializeField] VillageModels models = new VillageModels();
+        [Tooltip("La interfaz tapa 440 px a cada lado y 215 px abajo; la cámara encuadra la aldea en el hueco central.")]
+        [SerializeField] Vector3 cameraPosition = new Vector3(-0.4f, 17f, -19.6f);
+        [SerializeField] float cameraPitch = 46f;
+
         static readonly Vector3 FarmPos = new Vector3(-6f, 0f, 3f);
         static readonly Vector3 WellPos = new Vector3(0.5f, 0f, 5f);
         static readonly Vector3 PlazaPos = new Vector3(0f, 0f, -0.5f);
@@ -23,6 +50,23 @@ namespace LuckyCiv.View
         static readonly Vector3 HousesOrigin = new Vector3(-6f, 0f, -5f);
         const int HousesPerRow = 6;
         const float HouseSpacing = 2.4f;
+        const float AlertHeight = 4.2f;
+
+        static readonly Vector3[] TreeSpots =
+        {
+            new Vector3(-11f, 0f, 7f), new Vector3(-9f, 0f, 9f), new Vector3(-4f, 0f, 9.5f), new Vector3(5f, 0f, 9f),
+            new Vector3(10f, 0f, 8f), new Vector3(11.5f, 0f, 1f), new Vector3(10.5f, 0f, -6f), new Vector3(-11f, 0f, -3f),
+            new Vector3(-10f, 0f, -9f), new Vector3(3f, 0f, -10.5f),
+        };
+        static readonly Vector3[] BushSpots =
+        {
+            new Vector3(-3.6f, 0f, 7.2f), new Vector3(3.4f, 0f, 7.6f), new Vector3(-9.2f, 0f, 0.5f),
+            new Vector3(9.6f, 0f, -2.5f), new Vector3(-1.5f, 0f, -10f), new Vector3(8.8f, 0f, 5.8f),
+        };
+        static readonly Vector3[] RockSpots =
+        {
+            new Vector3(-9.6f, 0f, 5.2f), new Vector3(9.4f, 0f, 0.4f), new Vector3(-8.6f, 0f, -7.2f), new Vector3(5.2f, 0f, -10.4f),
+        };
 
         static readonly Color DaySun = new Color(1f, 0.96f, 0.88f);
         static readonly Color NightSun = new Color(0.45f, 0.55f, 0.95f);
@@ -30,22 +74,28 @@ namespace LuckyCiv.View
         static readonly Color NightAmbient = new Color(0.08f, 0.1f, 0.18f);
         static readonly Color DaySky = new Color(0.55f, 0.78f, 0.92f);
         static readonly Color NightSky = new Color(0.04f, 0.05f, 0.11f);
+        static readonly Color SadBanner = new Color(0.5f, 0.55f, 0.65f);
+        static readonly Color HappyBanner = new Color(0.9f, 0.25f, 0.2f);
+
+        static readonly Color Grass = new Color(0.42f, 0.6f, 0.3f);
+        static readonly Color Stone = new Color(0.55f, 0.55f, 0.58f);
+        static readonly Color Wood = new Color(0.72f, 0.52f, 0.32f);
+        static readonly Color Leaf = new Color(0.25f, 0.5f, 0.24f);
+        static readonly Color AlertRed = new Color(1f, 0.2f, 0.15f);
 
         Simulation sim;
         Material baseMaterial;
+        Material banner;
         readonly Dictionary<Color, Material> materials = new Dictionary<Color, Material>();
         readonly Dictionary<Villager, VillagerActor> actors = new Dictionary<Villager, VillagerActor>();
         readonly List<GameObject> houses = new List<GameObject>();
+        readonly System.Random decor = new System.Random(7);
         Transform root;
         GameObject scaffold;
         GameObject wellAlert;
         Light sun;
         Camera cam;
-        GameHUD hud;
         float night;
-        Vector2Int framedScreen;
-        Rect framedViewport;
-        int framedHouses = -1;
 
         void Start()
         {
@@ -56,14 +106,17 @@ namespace LuckyCiv.View
             baseMaterial = probe.GetComponent<Renderer>().sharedMaterial;
             Destroy(probe);
 
-            BuildGround();
-            BuildFarm();
-            BuildWell();
-            BuildPlaza();
-            BuildTower();
-            BuildTrees();
-            scaffold = BuildScaffold();
-            wellAlert = Make(PrimitiveType.Sphere, root, WellPos + new Vector3(0f, 3.6f, 0f), Vector3.one * 0.5f, new Color(1f, 0.2f, 0.15f));
+            Place(models.Ground, root, Vector3.zero, new Vector3(44f, 0.02f, 44f), Grass);
+            Place(models.Farm, root, FarmPos, new Vector3(5f, 0.3f, 4f), new Color(0.45f, 0.3f, 0.18f));
+            Place(models.Well, root, WellPos, new Vector3(1.8f, 1f, 1.8f), Stone);
+            Place(models.Tower, root, TowerPos, new Vector3(1.3f, 3.2f, 1.3f), Stone);
+            var plaza = Place(models.Plaza, root, PlazaPos, new Vector3(4.8f, 0.06f, 4.8f), new Color(0.85f, 0.75f, 0.5f));
+            banner = FindMaterial(plaza, "Banner");
+            BuildDecoration();
+            scaffold = Place(models.Scaffold, root, HousePos(0), new Vector3(1.6f, 1.6f, 1.6f), Wood);
+            wellAlert = models.Alert != null
+                ? Place(models.Alert, root, WellPos + Vector3.up * AlertHeight, Vector3.one, AlertRed)
+                : Make(PrimitiveType.Sphere, root, WellPos + Vector3.up * AlertHeight, Vector3.one * 0.5f, AlertRed);
 
             SetupCamera();
             SetupLight();
@@ -92,10 +145,11 @@ namespace LuckyCiv.View
             RenderSettings.ambientLight = Color.Lerp(DayAmbient, NightAmbient, night);
             if (cam != null) cam.backgroundColor = Color.Lerp(DaySky, NightSky, night);
 
-            FrameIfNeeded();
-
             if (wellAlert.activeSelf)
-                wellAlert.transform.position = WellPos + new Vector3(0f, 3.6f + Mathf.Sin(Time.time * 4f) * 0.25f, 0f);
+            {
+                wellAlert.transform.position = WellPos + new Vector3(0f, AlertHeight + Mathf.Sin(Time.time * 4f) * 0.2f, 0f);
+                wellAlert.transform.Rotate(0f, 90f * Time.deltaTime, 0f);
+            }
         }
 
         // ------------------------------------------------------------------ sync
@@ -107,13 +161,15 @@ namespace LuckyCiv.View
             scaffold.SetActive(s.ConstructionProgress > 0);
             scaffold.transform.position = HousePos(houses.Count);
             wellAlert.SetActive(s.WellBroken);
+            if (banner != null) banner.color = Color.Lerp(SadBanner, HappyBanner, s.Happiness / 100f);
             SyncVillagers(s);
         }
 
         void SyncHouses(GameState s)
         {
             int wanted = Mathf.Max(0, s.Housing / Mathf.Max(1, sim.Config.HousingPerConstruction));
-            while (houses.Count < wanted) houses.Add(BuildHouse(HousePos(houses.Count)));
+            while (houses.Count < wanted)
+                houses.Add(Place(models.House, root, HousePos(houses.Count), new Vector3(1.6f, 1.3f, 1.6f), new Color(0.85f, 0.75f, 0.6f), Rand(-6f, 6f)));
             while (houses.Count > wanted)
             {
                 Destroy(houses[houses.Count - 1]);
@@ -131,7 +187,9 @@ namespace LuckyCiv.View
                     actors[villager] = actor;
                 }
                 bool working = s.Phase == GamePhase.Planning || s.Phase == GamePhase.Emergency;
-                actor.SetAnchor(AnchorFor(villager, s, working), working ? 1.1f : 0.5f);
+                var anchor = AnchorFor(villager, s, working);
+                bool atHome = anchor == HomePos(villager);
+                actor.SetAnchor(anchor, atHome ? 0.35f : 1.1f, ViaFor(actor.transform.position, anchor));
             }
 
             foreach (var gone in actors.Keys.Where(v => !s.Villagers.Contains(v)).ToList())
@@ -143,12 +201,12 @@ namespace LuckyCiv.View
 
         Vector3 AnchorFor(Villager v, GameState s, bool working)
         {
-            var home = HousePos(v.Id % Mathf.Max(1, houses.Count)) + new Vector3(0f, 0f, -1.3f);
+            var home = HomePos(v);
             if (!working || !v.CanWork) return home;
             if (v.Assignment == null) return PlazaPos;
             switch (v.Assignment.Value)
             {
-                case ActivityType.Farming: return FarmPos;
+                case ActivityType.Farming: return FarmPos + new Vector3(0f, 0f, -0.8f);
                 case ActivityType.Water:
                 case ActivityType.RepairWell: return WellPos + new Vector3(1.8f, 0f, -0.5f);
                 case ActivityType.Entertainment: return PlazaPos;
@@ -158,101 +216,83 @@ namespace LuckyCiv.View
             }
         }
 
+        /// <summary>Cada habitante duerme delante del hueco que hay a la derecha de su casa.</summary>
+        Vector3 HomePos(Villager v) => HousePos(v.Id % Mathf.Max(1, houses.Count)) + new Vector3(HouseSpacing * 0.5f, 0f, -1.6f);
+
+        /// <summary>
+        /// Las casas forman una fila entre las camas y el resto de la aldea; para cruzarla sin atravesar paredes,
+        /// el habitante pasa primero por el hueco entre casas más cercano a su lado de la fila.
+        /// </summary>
+        static Vector3? ViaFor(Vector3 from, Vector3 to)
+        {
+            float crossZ = HousesOrigin.z + 1f;
+            bool fromFront = from.z < crossZ, toFront = to.z < crossZ;
+            if (fromFront == toFront) return null;
+            float sideX = fromFront ? from.x : to.x;
+            float gap = Mathf.Round((sideX - HousesOrigin.x) / HouseSpacing - 0.5f) + 0.5f;
+            return new Vector3(HousesOrigin.x + gap * HouseSpacing, 0f, crossZ);
+        }
+
         static Vector3 HousePos(int slot) =>
             HousesOrigin + new Vector3(slot % HousesPerRow * HouseSpacing, 0f, -(slot / HousesPerRow) * HouseSpacing);
 
         // ----------------------------------------------------------------- build
 
-        void BuildGround()
+        void BuildDecoration()
         {
-            Make(PrimitiveType.Plane, root, Vector3.zero, new Vector3(8f, 1f, 8f), new Color(0.42f, 0.6f, 0.3f));
-        }
-
-        void BuildFarm()
-        {
-            var farm = Group("Farm", FarmPos);
-            Make(PrimitiveType.Cube, farm, new Vector3(0f, 0.1f, 0f), new Vector3(5f, 0.2f, 4f), new Color(0.45f, 0.3f, 0.18f));
-            var crop = new Color(0.3f, 0.65f, 0.25f);
-            for (int x = 0; x < 5; x++)
-                for (int z = 0; z < 3; z++)
-                    Make(PrimitiveType.Cube, farm, new Vector3(-1.8f + x * 0.9f, 0.45f, -1.2f + z * 1.2f), new Vector3(0.4f, 0.5f, 0.4f), crop);
-        }
-
-        void BuildWell()
-        {
-            var well = Group("Well", WellPos);
-            var stone = new Color(0.55f, 0.55f, 0.58f);
-            var wood = new Color(0.4f, 0.26f, 0.15f);
-            Make(PrimitiveType.Cylinder, well, new Vector3(0f, 0.5f, 0f), new Vector3(1.8f, 0.5f, 1.8f), stone);
-            Make(PrimitiveType.Cylinder, well, new Vector3(0f, 1.0f, 0f), new Vector3(1.4f, 0.03f, 1.4f), new Color(0.25f, 0.5f, 0.9f));
-            Make(PrimitiveType.Cube, well, new Vector3(-0.8f, 1.8f, 0f), new Vector3(0.15f, 1.6f, 0.15f), wood);
-            Make(PrimitiveType.Cube, well, new Vector3(0.8f, 1.8f, 0f), new Vector3(0.15f, 1.6f, 0.15f), wood);
-            Make(PrimitiveType.Cube, well, new Vector3(0f, 2.7f, 0f), new Vector3(2.2f, 0.15f, 1.3f), new Color(0.6f, 0.25f, 0.2f));
-        }
-
-        void BuildPlaza()
-        {
-            var plaza = Group("Plaza", PlazaPos);
-            Make(PrimitiveType.Cylinder, plaza, new Vector3(0f, 0.03f, 0f), new Vector3(4.8f, 0.03f, 4.8f), new Color(0.85f, 0.75f, 0.5f));
-            Make(PrimitiveType.Cube, plaza, new Vector3(1.6f, 1.2f, 1.2f), new Vector3(0.12f, 2.4f, 0.12f), new Color(0.4f, 0.26f, 0.15f));
-            Make(PrimitiveType.Cube, plaza, new Vector3(1.95f, 2.2f, 1.2f), new Vector3(0.7f, 0.4f, 0.05f), new Color(0.9f, 0.25f, 0.2f));
-        }
-
-        void BuildTower()
-        {
-            var tower = Group("Tower", TowerPos);
-            Make(PrimitiveType.Cube, tower, new Vector3(0f, 1.6f, 0f), new Vector3(1.3f, 3.2f, 1.3f), new Color(0.5f, 0.48f, 0.45f));
-            Make(PrimitiveType.Cube, tower, new Vector3(0f, 3.3f, 0f), new Vector3(2f, 0.25f, 2f), new Color(0.4f, 0.26f, 0.15f));
-            Make(PrimitiveType.Cube, tower, new Vector3(0f, 3.95f, 0f), new Vector3(1.6f, 0.9f, 1.6f), new Color(0.35f, 0.22f, 0.14f));
-        }
-
-        void BuildTrees()
-        {
-            var trunk = new Color(0.4f, 0.26f, 0.15f);
-            var leaves = new Color(0.2f, 0.45f, 0.2f);
-            Vector3[] spots =
+            for (int i = 0; i < TreeSpots.Length; i++)
             {
-                new Vector3(-11f, 0f, 7f), new Vector3(-9f, 0f, 9f), new Vector3(-4f, 0f, 9.5f), new Vector3(5f, 0f, 9f),
-                new Vector3(10f, 0f, 8f), new Vector3(11.5f, 0f, 1f), new Vector3(10.5f, 0f, -6f), new Vector3(-11f, 0f, -3f),
-                new Vector3(-10f, 0f, -9f), new Vector3(3f, 0f, -10.5f),
-            };
-            for (int i = 0; i < spots.Length; i++)
-            {
-                var tree = Group("Tree", spots[i]);
-                float size = 1.2f + (i % 3) * 0.3f;
-                Make(PrimitiveType.Cylinder, tree, new Vector3(0f, 0.5f, 0f), new Vector3(0.25f, 0.5f, 0.25f), trunk);
-                Make(PrimitiveType.Sphere, tree, new Vector3(0f, 1.2f + size * 0.4f, 0f), Vector3.one * size, leaves);
+                var model = i % 3 == 1 ? models.TreePine : models.TreeRound;
+                Place(model, root, TreeSpots[i], new Vector3(1.2f, 2.5f, 1.2f), Leaf, Rand(0f, 360f), Rand(0.85f, 1.2f));
             }
-        }
-
-        GameObject BuildHouse(Vector3 pos)
-        {
-            var house = Group("House", pos);
-            Make(PrimitiveType.Cube, house, new Vector3(0f, 0.65f, 0f), new Vector3(1.6f, 1.3f, 1.6f), new Color(0.85f, 0.75f, 0.6f));
-            Make(PrimitiveType.Cube, house, new Vector3(0f, 1.3f, 0f), new Vector3(1.25f, 1.25f, 1.8f), new Color(0.6f, 0.25f, 0.2f), new Vector3(0f, 0f, 45f));
-            Make(PrimitiveType.Cube, house, new Vector3(0f, 0.35f, -0.81f), new Vector3(0.4f, 0.7f, 0.06f), new Color(0.3f, 0.18f, 0.1f));
-            return house.gameObject;
-        }
-
-        GameObject BuildScaffold()
-        {
-            var site = Group("Scaffold", HousePos(0));
-            var wood = new Color(0.75f, 0.6f, 0.4f);
-            for (int x = -1; x <= 1; x += 2)
-                for (int z = -1; z <= 1; z += 2)
-                    Make(PrimitiveType.Cube, site, new Vector3(x * 0.75f, 0.8f, z * 0.75f), new Vector3(0.1f, 1.6f, 0.1f), wood);
-            Make(PrimitiveType.Cube, site, new Vector3(0f, 1.6f, 0.75f), new Vector3(1.6f, 0.1f, 0.1f), wood);
-            Make(PrimitiveType.Cube, site, new Vector3(0f, 1.6f, -0.75f), new Vector3(1.6f, 0.1f, 0.1f), wood);
-            Make(PrimitiveType.Cube, site, new Vector3(0f, 0.15f, 0f), new Vector3(1.6f, 0.3f, 1.6f), new Color(0.85f, 0.75f, 0.6f));
-            return site.gameObject;
+            foreach (var spot in BushSpots)
+                Place(models.Bush, root, spot, new Vector3(0.8f, 0.6f, 0.8f), Leaf, Rand(0f, 360f), Rand(0.8f, 1.2f));
+            foreach (var spot in RockSpots)
+                Place(models.Rock, root, spot, new Vector3(1f, 0.5f, 1f), Stone, Rand(0f, 360f), Rand(0.8f, 1.3f));
         }
 
         VillagerActor BuildActor(Villager v)
         {
-            var home = HousePos(v.Id % Mathf.Max(1, houses.Count));
-            var body = Make(PrimitiveType.Capsule, root, home + new Vector3(0f, 0.45f, -1.3f), Vector3.one * 0.45f, ClassColor(v.Class));
+            var home = HomePos(v);
+            var model = models.Villager(v.Class);
+            var body = model != null
+                ? Place(model, root, home, Vector3.one, Color.white, Rand(0f, 360f))
+                : Make(PrimitiveType.Capsule, root, home + new Vector3(0f, 0.45f, 0f), Vector3.one * 0.45f, ClassColor(v.Class));
             body.name = "Villager " + v.Name;
             return body.AddComponent<VillagerActor>();
+        }
+
+        /// <summary>Instancia un modelo en la aldea o, si no hay modelo, una caja del tamaño aproximado.</summary>
+        GameObject Place(GameObject model, Transform parent, Vector3 localPos, Vector3 fallbackSize, Color fallbackColor, float yaw = 0f, float scale = 1f)
+        {
+            GameObject go;
+            if (model != null)
+            {
+                go = Instantiate(model, parent, false);
+                go.name = model.name;
+            }
+            else
+            {
+                go = new GameObject("Placeholder");
+                go.transform.SetParent(parent, false);
+                Make(PrimitiveType.Cube, go.transform, new Vector3(0f, fallbackSize.y / 2f, 0f), fallbackSize, fallbackColor);
+            }
+            go.transform.localPosition = localPos;
+            go.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+            go.transform.localScale = Vector3.one * scale;
+            return go;
+        }
+
+        static Material FindMaterial(GameObject go, string namePrefix)
+        {
+            foreach (var renderer in go.GetComponentsInChildren<Renderer>())
+            {
+                var shared = renderer.sharedMaterials;
+                for (int i = 0; i < shared.Length; i++)
+                    if (shared[i] != null && shared[i].name.StartsWith(namePrefix, StringComparison.Ordinal))
+                        return renderer.materials[i];
+            }
+            return null;
         }
 
         static Color ClassColor(VillagerClass cls)
@@ -266,98 +306,18 @@ namespace LuckyCiv.View
             }
         }
 
-        // --------------------------------------------------------------- helpers
+        float Rand(float min, float max) => min + (float)decor.NextDouble() * (max - min);
 
-        const float CameraPitch = 50f;
-        const float CameraFov = 38f;
-        const float FrameMargin = 0.03f;
+        // --------------------------------------------------------------- helpers
 
         void SetupCamera()
         {
             cam = Camera.main;
-            hud = GetComponent<GameHUD>();
             if (cam == null) return;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.transform.rotation = Quaternion.Euler(CameraPitch, 0f, 0f);
-        }
-
-        /// <summary>Re-fits the camera when the screen size, the free HUD area or the number of houses changes.</summary>
-        void FrameIfNeeded()
-        {
-            if (cam == null) return;
-            var screen = new Vector2Int(Screen.width, Screen.height);
-            var viewport = hud != null ? hud.WorldViewport : new Rect(0f, 0f, 1f, 1f);
-            if (screen == framedScreen && viewport == framedViewport && houses.Count == framedHouses) return;
-            framedScreen = screen;
-            framedViewport = viewport;
-            framedHouses = houses.Count;
-            FrameVillage(viewport);
-        }
-
-        /// <summary>
-        /// Shifts the projection center to the middle of the area the HUD leaves free and pulls the camera
-        /// back just enough for the whole village to fit there, so it reads the same at any aspect ratio.
-        /// </summary>
-        void FrameVillage(Rect viewport)
-        {
-            cam.ResetProjectionMatrix();
-            cam.ResetAspect();
-            cam.fieldOfView = CameraFov;
-            var projection = cam.projectionMatrix;
-            projection.m02 = 1f - 2f * viewport.center.x;
-            projection.m12 = 1f - 2f * viewport.center.y;
-            cam.projectionMatrix = projection;
-
-            var points = FramePoints();
-            var bounds = new Bounds(points[0], Vector3.zero);
-            foreach (var p in points) bounds.Encapsulate(p);
-            var target = new Vector3(bounds.center.x, 0f, bounds.center.z);
-
-            var inner = Rect.MinMaxRect(viewport.xMin + FrameMargin, viewport.yMin + FrameMargin,
-                viewport.xMax - FrameMargin, viewport.yMax - FrameMargin);
-            float near = 4f, far = 120f;
-            for (int i = 0; i < 24; i++)
-            {
-                float mid = (near + far) * 0.5f;
-                PlaceCamera(target, mid);
-                if (AllInside(points, inner)) far = mid; else near = mid;
-            }
-            PlaceCamera(target, far);
-        }
-
-        void PlaceCamera(Vector3 target, float distance) =>
-            cam.transform.position = target - cam.transform.forward * distance;
-
-        bool AllInside(List<Vector3> points, Rect area)
-        {
-            foreach (var p in points)
-            {
-                var v = cam.WorldToViewportPoint(p);
-                if (v.z <= 0f || !area.Contains(new Vector2(v.x, v.y))) return false;
-            }
-            return true;
-        }
-
-        /// <summary>Points that must stay on screen: buildings, roofs, and the houses with the villagers sleeping in front.</summary>
-        List<Vector3> FramePoints()
-        {
-            var points = new List<Vector3>
-            {
-                FarmPos + new Vector3(-2.6f, 0f, 2.1f), FarmPos + new Vector3(-2.6f, 0f, -2.1f), FarmPos + new Vector3(2.6f, 0f, 2.1f),
-                WellPos + new Vector3(-1.1f, 2.8f, 0.7f), WellPos + new Vector3(1.1f, 2.8f, 0.7f), WellPos + new Vector3(0f, 4f, 0f),
-                TowerPos + new Vector3(-1f, 4.4f, 1f), TowerPos + new Vector3(1f, 4.4f, 1f), TowerPos + new Vector3(1f, 0f, -1f),
-                PlazaPos + new Vector3(0f, 0f, -2.4f),
-            };
-            int slots = Mathf.Max(houses.Count + 1, HousesPerRow);
-            for (int i = 0; i < slots; i++)
-            {
-                var h = HousePos(i);
-                points.Add(h + new Vector3(-0.9f, 2.2f, 0.9f));
-                points.Add(h + new Vector3(0.9f, 2.2f, 0.9f));
-                points.Add(h + new Vector3(-0.9f, 0f, -1.9f));
-                points.Add(h + new Vector3(0.9f, 0f, -1.9f));
-            }
-            return points;
+            cam.transform.position = cameraPosition;
+            cam.transform.rotation = Quaternion.Euler(cameraPitch, 0f, 0f);
+            cam.fieldOfView = 45f;
         }
 
         void SetupLight()
@@ -366,21 +326,12 @@ namespace LuckyCiv.View
             RenderSettings.ambientMode = AmbientMode.Flat;
         }
 
-        Transform Group(string name, Vector3 pos)
-        {
-            var go = new GameObject(name);
-            go.transform.SetParent(root, false);
-            go.transform.localPosition = pos;
-            return go.transform;
-        }
-
-        GameObject Make(PrimitiveType type, Transform parent, Vector3 localPos, Vector3 scale, Color color, Vector3? euler = null)
+        GameObject Make(PrimitiveType type, Transform parent, Vector3 localPos, Vector3 scale, Color color)
         {
             var go = GameObject.CreatePrimitive(type);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = localPos;
             go.transform.localScale = scale;
-            if (euler.HasValue) go.transform.localEulerAngles = euler.Value;
             go.GetComponent<Renderer>().sharedMaterial = Material(color);
             Destroy(go.GetComponent<Collider>());
             return go;

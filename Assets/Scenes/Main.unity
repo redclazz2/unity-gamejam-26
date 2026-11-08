@@ -531,6 +531,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c65cc3f6e79645968e6005c865c9c904, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  models:
+    VillagerNormal: {fileID: 919132149155446097, guid: b732010ce95a7ce409f67174a722ff5d, type: 3}
+    VillagerStrong: {fileID: 919132149155446097, guid: f09c7a3b48bfa6240902c2d5ea6eb15a, type: 3}
+    VillagerSmart: {fileID: 919132149155446097, guid: 8cea22ec3dadd7045ac609f1fe280cf7, type: 3}
+    VillagerFast: {fileID: 919132149155446097, guid: f26500e538281414d80650bb2e2aba7e, type: 3}
+    House: {fileID: 919132149155446097, guid: 577c2514170971946b1ae5806bdbe1bb, type: 3}
+    Farm: {fileID: 919132149155446097, guid: 0ff395a577adb0a42baa3622848d3028, type: 3}
+    Well: {fileID: 919132149155446097, guid: f43f24a9be7092a4db4069248d15be09, type: 3}
+    Plaza: {fileID: 919132149155446097, guid: dba18fc2bcdc61a48ac89f9b4dc72272, type: 3}
+    Tower: {fileID: 919132149155446097, guid: 80c6522a081c9304eb689c90f4bae56a, type: 3}
+    Scaffold: {fileID: 919132149155446097, guid: 910111ded452df945b562c60975cdc05, type: 3}
+    TreeRound: {fileID: 919132149155446097, guid: e6a880a42b6bffb4d96b8f1c9bdafe6f, type: 3}
+    TreePine: {fileID: 919132149155446097, guid: ec5e0e46bf8305349a878a9ed4e4ce42, type: 3}
+    Bush: {fileID: 919132149155446097, guid: cb83858e8ea2ffa448038c7f0ca41bd0, type: 3}
+    Rock: {fileID: 919132149155446097, guid: 3cc47b4732737344283d6aa25f9975f9, type: 3}
+    Ground: {fileID: 919132149155446097, guid: edb59ce32de62c54ea1d0616b382eed4, type: 3}
+    Alert: {fileID: 919132149155446097, guid: 1370229961151ab44a7c8b8881d903ed, type: 3}
+  cameraPosition: {x: -0.4, y: 17, z: -19.6}
+  cameraPitch: 46
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
