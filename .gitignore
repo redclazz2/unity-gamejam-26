@@ -139,3 +139,8 @@ crashlytics-build.properties
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Balance harness build output
+Tools/Balance/bin/
+Tools/Balance/obj/
+!Tools/Balance/Balance.csproj
