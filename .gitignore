@@ -144,3 +144,6 @@ crashlytics-build.properties
 Tools/Balance/bin/
 Tools/Balance/obj/
 !Tools/Balance/Balance.csproj
+
+# Blender backups
+Tools/Blender/*.blend1
