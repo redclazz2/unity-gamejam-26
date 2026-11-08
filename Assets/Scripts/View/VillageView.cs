@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using LuckyCiv.Core;
 using LuckyCiv.Game;
+using LuckyCiv.UI;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -40,7 +41,11 @@ namespace LuckyCiv.View
         GameObject wellAlert;
         Light sun;
         Camera cam;
+        GameHUD hud;
         float night;
+        Vector2Int framedScreen;
+        Rect framedViewport;
+        int framedHouses = -1;
 
         void Start()
         {
@@ -86,6 +91,8 @@ namespace LuckyCiv.View
             }
             RenderSettings.ambientLight = Color.Lerp(DayAmbient, NightAmbient, night);
             if (cam != null) cam.backgroundColor = Color.Lerp(DaySky, NightSky, night);
+
+            FrameIfNeeded();
 
             if (wellAlert.activeSelf)
                 wellAlert.transform.position = WellPos + new Vector3(0f, 3.6f + Mathf.Sin(Time.time * 4f) * 0.25f, 0f);
@@ -158,7 +165,7 @@ namespace LuckyCiv.View
 
         void BuildGround()
         {
-            Make(PrimitiveType.Plane, root, Vector3.zero, new Vector3(3f, 1f, 3f), new Color(0.42f, 0.6f, 0.3f));
+            Make(PrimitiveType.Plane, root, Vector3.zero, new Vector3(8f, 1f, 8f), new Color(0.42f, 0.6f, 0.3f));
         }
 
         void BuildFarm()
@@ -261,19 +268,101 @@ namespace LuckyCiv.View
 
         // --------------------------------------------------------------- helpers
 
+        const float CameraPitch = 50f;
+        const float CameraFov = 38f;
+        const float FrameMargin = 0.03f;
+
         void SetupCamera()
         {
             cam = Camera.main;
+            hud = GetComponent<GameHUD>();
             if (cam == null) return;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.transform.position = new Vector3(0f, 13.5f, -13.5f);
-            cam.transform.rotation = Quaternion.Euler(46f, 0f, 0f);
-            cam.fieldOfView = 45f;
+            cam.transform.rotation = Quaternion.Euler(CameraPitch, 0f, 0f);
+        }
+
+        /// <summary>Re-fits the camera when the screen size, the free HUD area or the number of houses changes.</summary>
+        void FrameIfNeeded()
+        {
+            if (cam == null) return;
+            var screen = new Vector2Int(Screen.width, Screen.height);
+            var viewport = hud != null ? hud.WorldViewport : new Rect(0f, 0f, 1f, 1f);
+            if (screen == framedScreen && viewport == framedViewport && houses.Count == framedHouses) return;
+            framedScreen = screen;
+            framedViewport = viewport;
+            framedHouses = houses.Count;
+            FrameVillage(viewport);
+        }
+
+        /// <summary>
+        /// Shifts the projection center to the middle of the area the HUD leaves free and pulls the camera
+        /// back just enough for the whole village to fit there, so it reads the same at any aspect ratio.
+        /// </summary>
+        void FrameVillage(Rect viewport)
+        {
+            cam.ResetProjectionMatrix();
+            cam.ResetAspect();
+            cam.fieldOfView = CameraFov;
+            var projection = cam.projectionMatrix;
+            projection.m02 = 1f - 2f * viewport.center.x;
+            projection.m12 = 1f - 2f * viewport.center.y;
+            cam.projectionMatrix = projection;
+
+            var points = FramePoints();
+            var bounds = new Bounds(points[0], Vector3.zero);
+            foreach (var p in points) bounds.Encapsulate(p);
+            var target = new Vector3(bounds.center.x, 0f, bounds.center.z);
+
+            var inner = Rect.MinMaxRect(viewport.xMin + FrameMargin, viewport.yMin + FrameMargin,
+                viewport.xMax - FrameMargin, viewport.yMax - FrameMargin);
+            float near = 4f, far = 120f;
+            for (int i = 0; i < 24; i++)
+            {
+                float mid = (near + far) * 0.5f;
+                PlaceCamera(target, mid);
+                if (AllInside(points, inner)) far = mid; else near = mid;
+            }
+            PlaceCamera(target, far);
+        }
+
+        void PlaceCamera(Vector3 target, float distance) =>
+            cam.transform.position = target - cam.transform.forward * distance;
+
+        bool AllInside(List<Vector3> points, Rect area)
+        {
+            foreach (var p in points)
+            {
+                var v = cam.WorldToViewportPoint(p);
+                if (v.z <= 0f || !area.Contains(new Vector2(v.x, v.y))) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Points that must stay on screen: buildings, roofs, and the houses with the villagers sleeping in front.</summary>
+        List<Vector3> FramePoints()
+        {
+            var points = new List<Vector3>
+            {
+                FarmPos + new Vector3(-2.6f, 0f, 2.1f), FarmPos + new Vector3(-2.6f, 0f, -2.1f), FarmPos + new Vector3(2.6f, 0f, 2.1f),
+                WellPos + new Vector3(-1.1f, 2.8f, 0.7f), WellPos + new Vector3(1.1f, 2.8f, 0.7f), WellPos + new Vector3(0f, 4f, 0f),
+                TowerPos + new Vector3(-1f, 4.4f, 1f), TowerPos + new Vector3(1f, 4.4f, 1f), TowerPos + new Vector3(1f, 0f, -1f),
+                PlazaPos + new Vector3(0f, 0f, -2.4f),
+            };
+            int slots = Mathf.Max(houses.Count + 1, HousesPerRow);
+            for (int i = 0; i < slots; i++)
+            {
+                var h = HousePos(i);
+                points.Add(h + new Vector3(-0.9f, 2.2f, 0.9f));
+                points.Add(h + new Vector3(0.9f, 2.2f, 0.9f));
+                points.Add(h + new Vector3(-0.9f, 0f, -1.9f));
+                points.Add(h + new Vector3(0.9f, 0f, -1.9f));
+            }
+            return points;
         }
 
         void SetupLight()
         {
-            sun = RenderSettings.sun != null ? RenderSettings.sun : FindFirstObjectByType<Light>();
+            sun = RenderSettings.sun != null ? RenderSettings.sun : FindAnyObjectByType<Light>();
             RenderSettings.ambientMode = AmbientMode.Flat;
         }
 

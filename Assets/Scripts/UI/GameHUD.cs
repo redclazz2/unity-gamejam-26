@@ -24,6 +24,7 @@ namespace LuckyCiv.UI
         const float BottomHeight = 215f;
 
         GameController controller;
+        Canvas canvas;
         Simulation sim;
         Villager selected;
         bool scrollLogToBottom;
@@ -54,10 +55,30 @@ namespace LuckyCiv.UI
             if (sim != null) sim.Changed -= Refresh;
         }
 
+        /// <summary>
+        /// Screen area not covered by the side, top and bottom panels, in viewport coordinates (0–1).
+        /// The village camera centers and fits the village inside it.
+        /// </summary>
+        public Rect WorldViewport
+        {
+            get
+            {
+                if (canvas == null || Screen.width <= 0 || Screen.height <= 0) return new Rect(0f, 0f, 1f, 1f);
+                float k = canvas.scaleFactor;
+                float w = Screen.width, h = Screen.height;
+                float xMin = SideWidth * k / w, xMax = 1f - SideWidth * k / w;
+                float yMin = BottomHeight * k / h, yMax = 1f - TopBarHeight * k / h;
+                if (xMax <= xMin || yMax <= yMin) return new Rect(0f, 0f, 1f, 1f);
+                return Rect.MinMaxRect(xMin, yMin, xMax, yMax);
+            }
+        }
+
         void LateUpdate()
         {
             if (!scrollLogToBottom) return;
             scrollLogToBottom = false;
+            // The journal grew this frame; rebuild its layout first or the scroll stops short of the new lines.
+            Canvas.ForceUpdateCanvases();
             logScroll.verticalNormalizedPosition = 0f;
         }
 
@@ -66,7 +87,8 @@ namespace LuckyCiv.UI
         void Build()
         {
             var canvasGo = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            canvasGo.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas = canvasGo.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             var scaler = canvasGo.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
