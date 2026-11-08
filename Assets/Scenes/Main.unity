@@ -548,8 +548,6 @@ MonoBehaviour:
     Rock: {fileID: 919132149155446097, guid: 3cc47b4732737344283d6aa25f9975f9, type: 3}
     Ground: {fileID: 919132149155446097, guid: edb59ce32de62c54ea1d0616b382eed4, type: 3}
     Alert: {fileID: 919132149155446097, guid: 1370229961151ab44a7c8b8881d903ed, type: 3}
-  cameraPosition: {x: -0.4, y: 17, z: -19.6}
-  cameraPitch: 46
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
